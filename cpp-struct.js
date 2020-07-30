@@ -13,79 +13,83 @@ function struct(name, schema, count, bytes) {
 }
 
 // instance members
-struct.prototype.setEncoder = function(f) {
+struct.prototype.setEncoder = function (f) {
 	return this.encoder = f, this;
 }
 
-struct.prototype.setDecoder = function(f) {
+struct.prototype.setDecoder = function (f) {
 	return this.decoder = f, this;
 }
 
-struct.prototype.setIsNoArray = function(noArray) {
+struct.prototype.setIsNoArray = function (noArray) {
 	return this.isNoArray = noArray, this;
 }
 
 struct.prototype.forEachInSchema = function (f) {
-	for (var i=0;i<this.schema.length;i+=2) {
+	for (var i = 0; i < this.schema.length; i += 2) {
 		var name = this.schema[i];
-		var type = this.schema[i+1];
-		f(name,type);
+		var type = this.schema[i + 1];
+		f(name, type);
 	}
 }
 
-struct.prototype.size = function() {
+struct.prototype.size = function () {
 	return this.bytes * this.count;
 };
 
-struct.prototype.toString = function() {
-	var out = ["struct "+this.name+" {"]
-	this.forEachInSchema((name,type)=>{	
-		var arr = type.count > 1 ? "["+type.count+"]" : "";
-		out.push("  "+type.name+" "+name+arr+"; // Size: "+type.size());
+struct.prototype.toString = function () {
+	var out = ["struct " + this.name + " {"]
+	this.forEachInSchema((name, type) => {
+		var arr = type.count > 1 ? "[" + type.count + "]" : "";
+		out.push("  " + type.name + " " + name + arr + "; // Size: " + type.size());
 	});
-	out.push("}; // Size: "+this.size());
+	out.push("}; // Size: " + this.size());
 	return out.join("\n");
 };
 
-struct.prototype.encode = function(buffer,pos, data, opt) {
-	this.encoder(buffer,pos||0,data, opt);
+struct.prototype.encode = function (buffer, pos, data, opt) {
+	this.encoder(buffer, pos || 0, data, opt);
 };
 
-struct.prototype.decode = function(buffer,pos,opt) {
-	return this.decoder(buffer,pos||0,opt);
+struct.prototype.decodeinternal = function (buffer, opt) {
+	return this.decoder(buffer,opt);
+}
+
+struct.prototype.decode = function (buffer, pos, opt) {
+	optinternal = { posinternal: pos || 0, littleEndian: isLittleEndian(opt) }
+	return this.decodeinternal(buffer, optinternal)
 };
 
 // class members
-struct.encoder = function(buffer, pos, data, opt) {
-	this.forEachInSchema((name,type)=> {
+struct.encoder = function (buffer, pos, data, opt) {
+	this.forEachInSchema((name, type) => {
 		var dval = data && data[name]
-		//console.log(pos,this.name+"."+name,type.name,type.size(),type.schema);
-		for (var j=0;j<type.count;j+=1) {
+		for (var j = 0; j < type.count; j += 1) {
 			var el = dval && dval.join ? dval[j] : dval;
-			type.encode(buffer,pos,el,opt);
+			type.encode(buffer, pos, el, opt);
 			if (type.isNoArray) {
 				pos += type.size();
 				break;
 			} else {
-				pos += type.bytes;	
+				pos += type.bytes;
 			}
 		}
 	});
 }
 
-struct.decoder = function(buffer, pos, opt) {
+struct.decoder = function (buffer, opt) {
 	var data = {}
 	this.forEachInSchema((name,type)=> {
 		if (type.count == 1 || type.isNoArray) {
-			data[name] = type.decode(buffer,pos,opt);
-			pos += type.size();
+			data[name] = type.decodeinternal(buffer, opt);
+			opt.posinternal += type.size();
 		} else {
 			var arr = [];
 			data[name] = arr;
-			for (var i=0;i<type.count;i+=1) {
-				arr[i] = type.decode(buffer,pos,opt);
+			for (var i = 0; i < type.count; i += 1) {
+				arr[i] = type.decodeinternal(buffer, opt);
 				//console.log(pos,arr[i],type)
-				pos += type.bytes;
+				opt.posinternal += type.bytes;
 			}
 		}
 	});
@@ -104,8 +108,8 @@ struct.type = function(type,size,count) {
 			}
 		)
 		.setDecoder(
-			(buffer,pos,data,opt)=>{
-				return type.decode(buffer,pos,opt);
+			(buffer, opt) => {
+				return type.decodeinternal(buffer, opt);
 			}
 		)
 }
@@ -121,8 +125,8 @@ struct.char = function(n) {
 			}
 		)
 		.setDecoder(
-			(buffer,pos,opt) => {
-				var s = buffer.toString("ASCII",pos,pos+n);
+			(buffer, opt) => {
+				var s = buffer.toString("ASCII", opt.posinternal, opt.posinternal + n);
 				var cutAt = s.indexOf("\0");
 				if (cutAt < 0) return s;
 				return s.substr(0,cutAt);
@@ -173,13 +177,13 @@ function addNumberType(jsName,bytes,alias,aliasCPP) {
 	struct[alias] = function(n) {
 		return this.type(aliasCPP||(jsName.toLowerCase()+"_t"),bytes,n)
 			.setEncoder(
-				(buffer,pos,data,opt) => {
-					buffer[writeAccess[isLittleEndian(opt)]](data||0,pos);
+				(buffer, pos, data, opt) => {
+					buffer[writeAccess[isLittleEndian(opt)]](data || 0, pos);
 				}
 			)
 			.setDecoder(
-				(buffer,pos,opt) => {
-					return buffer[readAccess[isLittleEndian(opt)]](pos);
+				(buffer, opt) => {
+					return buffer[readAccess[opt.littleEndian]](opt.posinternal);
 				}
 			)
 	}
